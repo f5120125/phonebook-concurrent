@@ -7,29 +7,25 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define MAX_BUFF_SIZE 1000
+#define MAX_BUFF_SIZE 20
 
-void file_align(char *org, char *mod, int pad)
+void file_align(char *orig_path, char *align_path, int size)
 {
-    FILE *fd0 = fopen(org, "r");
-    FILE *fd1 = fopen(mod, "w+");
+    FILE *orig_fp = fopen(orig_path, "r");
+    FILE *align_fp = fopen(align_path, "w+");
 
-    char rbuf[MAX_BUFF_SIZE];
-    int suffix;
+    char read_buff[MAX_BUFF_SIZE];
 
-    char *wbuf = (char *) malloc(sizeof(char) * pad);
+    char *write_buff = (char *) malloc(sizeof(char) * size);
 
-    while (fgets(rbuf, sizeof(rbuf), fd0)) {
-        memset(wbuf, '\0', pad);
-
-        if ((suffix = (pad - strlen(rbuf))) != 0)
-            strcpy(wbuf, rbuf);
-
-        fwrite(wbuf, pad, 1, fd1);
+    while (fgets(read_buff, sizeof(read_buff), orig_fp)) {
+        memset(write_buff, '\0', size);
+		strcpy(write_buff, read_buff);
+        fwrite(write_buff, size, 1, align_fp);
     }
 
-    fclose(fd0);
-    fclose(fd1);
+    fclose(orig_fp);
+    fclose(align_fp);
 }
 
 off_t fsize(char *path)
