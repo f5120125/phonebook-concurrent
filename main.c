@@ -1,28 +1,23 @@
 #define  _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <string.h>//strcmp()
 #include <time.h>
 #include <assert.h>
-
+#include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <sys/mman.h>
+#include <sys/mman.h>//mmap()
 
 #include "file.c"
 #include "debug.h"
-#include <fcntl.h>
 
 #include IMPL
 
-#define DICT_FILE "./dictionary/words.txt"
+#define ORIG_FILE "./dictionary/words.txt"
 
-
-#if defined(OPT)
-#ifndef THREAD_NUM
-#define THREAD_NUM 4
-#endif
-
+#define THREAD_NUM 32
+#define ALIGN_FILE "align.txt"
 
 static double diff_in_second(struct timespec t1, struct timespec t2)
 {
@@ -39,31 +34,8 @@ static double diff_in_second(struct timespec t1, struct timespec t2)
 
 int main(int argc, char *argv[])
 {
-#ifndef OPT
-    FILE *fp;
-    int i = 0;
-    char line[MAX_LAST_NAME_SIZE];
-#else
-    struct timespec mid;
-#endif
     struct timespec start, end;
     double cpu_time1, cpu_time2;
-
-#ifndef OPT
-    /* check file opening */
-    fp = fopen(DICT_FILE, "r");
-    if (!fp) {
-        printf("cannot open the file\n");
-        return -1;
-    }
-#else
-
-
-#define ALIGN_FILE "align.txt"
-    file_align(DICT_FILE, ALIGN_FILE, MAX_LAST_NAME_SIZE);
-    int fd = open(ALIGN_FILE, O_RDONLY | O_NONBLOCK);
-    off_t fs = fsize(ALIGN_FILE);
-#endif
 
     /* build the entry */
     entry *pHead, *e;
@@ -72,9 +44,28 @@ int main(int argc, char *argv[])
     e = pHead;
     e->pNext = NULL;
 
+#ifndef OPT
+    FILE *fp;
+    int i = 0;
+    char line[MAX_LAST_NAME_SIZE];
+
+    /* check file opening */
+    fp = fopen(ORIG_FILE, "r");
+    if (!fp) {
+        printf("cannot open the file\n");
+        return -1;
+    }
+#else
+    file_align(ORIG_FILE, ALIGN_FILE, MAX_LAST_NAME_SIZE);
+    int fd = open(ALIGN_FILE, O_RDONLY | O_NONBLOCK);
+    off_t fs = fsize(ALIGN_FILE);
+#endif
+
 #if defined(__GNUC__)
     __builtin___clear_cache((char *) pHead, (char *) pHead + sizeof(entry));
 #endif
+
+#if defined(OPT)
 
     clock_gettime(CLOCK_REALTIME, &start);
 
@@ -82,20 +73,22 @@ int main(int argc, char *argv[])
     assert(map && "mmap error");
 
     /* allocate at beginning */
-    entry *entry_pool = (entry *) malloc(sizeof(entry) * fs / MAX_LAST_NAME_SIZE);
+    entry *entry_pool = (entry *) malloc(sizeof(entry) *
+                                         fs / MAX_LAST_NAME_SIZE);
 
     assert(entry_pool && "entry_pool error");
 
     pthread_setconcurrency(THREAD_NUM + 1);
 
-    pthread_t *tid = (pthread_t *) malloc(sizeof(pthread_t) * THREAD_NUM);
-    append_a **app = (append_a **) malloc(sizeof(append_a *) * THREAD_NUM);
+    pthread_t *tid = (pthread_t *) malloc(sizeof(pthread_t) * THREAD_NUM);//set of thread ID
+    thread_args **argsPtr = (thread_args **) malloc(sizeof(thread_args *) * THREAD_NUM);//
+    for (int i = 0; i < THREAD_NUM; i++)
+        argsPtr[i] = init_thread_args(map + MAX_LAST_NAME_SIZE * i, map + fs, i,
+                              THREAD_NUM, entry_pool + i);
 
-    clock_gettime(CLOCK_REALTIME, &mid);
-    for (int i = 0; i < THREAD_NUM; i++){
-		app[i] = new_append_a(map + MAX_LAST_NAME_SIZE * i, map + fs, i, THREAD_NUM, entry_pool + i);
-        pthread_create( &tid[i], NULL, (void *) &append, (void *) app[i]);
-	}
+    for (int i = 0; i < THREAD_NUM; i++)
+        pthread_create( &tid[i], NULL, (void *) &append, (void *) argsPtr[i]);
+        //pthread_join(tid[i], NULL);
 
     for (int i = 0; i < THREAD_NUM; i++)
         pthread_join(tid[i], NULL);
@@ -104,19 +97,11 @@ int main(int argc, char *argv[])
     pHead = pHead->pNext;
     for (int i = 0; i < THREAD_NUM; i++) {
         if (i == 0) {
-            pHead = app[i]->pHead->pNext;
-            dprintf("Connect %d head string %s %p\n", i,
-                    app[i]->pHead->pNext->lastName, app[i]->ptr);
+            pHead = argsPtr[i]->entryHead->pNext;
         } else {
-            etmp->pNext = app[i]->pHead->pNext;
-            dprintf("Connect %d head string %s %p\n", i,
-                    app[i]->pHead->pNext->lastName, app[i]->ptr);
+            etmp->pNext = argsPtr[i]->entryHead->pNext;
         }
-
-        etmp = app[i]->pLast;
-        dprintf("Connect %d tail string %s %p\n", i,
-                app[i]->pLast->lastName, app[i]->ptr);
-        dprintf("round %d\n", i);
+        etmp = argsPtr[i]->entryTail;
     }
 
     clock_gettime(CLOCK_REALTIME, &end);
@@ -133,10 +118,6 @@ int main(int argc, char *argv[])
 
     clock_gettime(CLOCK_REALTIME, &end);
     cpu_time1 = diff_in_second(start, end);
-#endif
-
-#ifndef OPT
-    /* close file as soon as possible */
     fclose(fp);
 #endif
 
@@ -146,18 +127,49 @@ int main(int argc, char *argv[])
     char input[MAX_LAST_NAME_SIZE] = "zyxel";
     e = pHead;
 
-    assert(findName(input, e) &&
+    /*assert(findName(input, e) &&
            "Did you implement findName() in " IMPL "?");
-    assert(0 == strcmp(findName(input, e)->lastName, "zyxel"));
+    assert(0 == strcmp(findName(input, e)->lastName, "zyxel"));*/
 
 #if defined(__GNUC__)
     __builtin___clear_cache((char *) pHead, (char *) pHead + sizeof(entry));
 #endif
+
+#if OPT
+/*
+	find_name_args *find_argPtr = (find_name_args *)malloc( sizeof(find_name_args)*THREAD_NUM );
+
+	clock_gettime(CLOCK_REALTIME, &start);
+	for (int i = 0; i < THREAD_NUM; i++){
+		find_argPtr[i].entryList = argsPtr[i]->entryHead;
+		find_argPtr[i].lastName = "zyxel";
+
+		pthread_create( &tid[i], NULL, (void *)&findName, &find_argPtr[i]);
+//        pthread_join(tid[i], NULL);
+	}
+    for (int i = 0; i < THREAD_NUM; i++)
+        pthread_join(tid[i], NULL);
+
+    clock_gettime(CLOCK_REALTIME, &end);
+    cpu_time2 = diff_in_second(start, end);
+*/
+
+	clock_gettime(CLOCK_REALTIME, &start);
+    findName(input, e);
+    clock_gettime(CLOCK_REALTIME, &end);
+    cpu_time2 = diff_in_second(start, end);
+
+#else
     /* compute the execution time */
     clock_gettime(CLOCK_REALTIME, &start);
     findName(input, e);
     clock_gettime(CLOCK_REALTIME, &end);
     cpu_time2 = diff_in_second(start, end);
+
+#endif
+
+
+
 
     FILE *output;
 #if defined(OPT)
@@ -165,6 +177,7 @@ int main(int argc, char *argv[])
 #else
     output = fopen("orig.txt", "a");
 #endif
+
     fprintf(output, "append() findName() %lf %lf\n", cpu_time1, cpu_time2);
     fclose(output);
 
@@ -177,7 +190,7 @@ int main(int argc, char *argv[])
 #else
     free(entry_pool);
     free(tid);
-    free(app);
+    free(argsPtr);
     munmap(map, fs);
 #endif
     return 0;

@@ -8,6 +8,7 @@
 
 #define OPT 1
 
+
 typedef struct _detail {
     char firstName[16];
     char email[16];
@@ -29,23 +30,31 @@ typedef struct __PHONE_BOOK_ENTRY {
 } entry;
 
 entry *findName(char lastname[], entry *pHead);
-
+//void findName(void *args);
 typedef struct _append_a {
-    char *ptr;
-    char *eptr;
+    char *startPtr;
+    char *endPtr;
     int tid;
-    int nthread;
-    entry *entryStart;
-    entry *pHead;
-    entry *pLast;
-} append_a;
+    int num_thread;
+    //entry *entryStart;
+    entry *entryHead;
+    entry *entryTail;
+} thread_args;
 
-append_a *new_append_a(char *ptr, char *eptr, int tid, int ntd, entry *start);
+typedef struct _find_name_args{
+	entry *entryList;
+	char *lastName;
+}find_name_args;
+
+
+
+
+thread_args *init_thread_args(char *startPtr, char *endPtr, int tid, int num_thread, entry *entryStart);
 
 void append(void *arg);
 
 void show_entry(entry *pHead);
 
-static double diff_in_second(struct timespec t1, struct timespec t2);
+//static double diff_in_second(struct timespec t1, struct timespec t2);
 
 #endif
